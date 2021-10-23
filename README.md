@@ -39,3 +39,71 @@ Here is our plan to Re-initialize Terraform to use S3 backend:
 - terraform apply
 
 
+Create a file and name it backend.tf. Add the below code and replace the name of the S3 bucket created in Project16-Darey.io-PBL( https://github.com/genius101/Project16-Darey.io-PBL)
+
+    # Note: The bucket name may not work for you since buckets are unique globally in AWS, so you must give it a unique name.
+    resource "aws_s3_bucket" "terraform_state" {
+      bucket = "dev-terraform-bucket"
+      # Enable versioning so we can see the full revision history of our state files
+      versioning {
+        enabled = true
+      }
+      # Enable server-side encryption by default
+      server_side_encryption_configuration {
+        rule {
+          apply_server_side_encryption_by_default {
+            sse_algorithm = "AES256"
+          }
+        }
+      }
+    }
+    
+Terraform stores secret data inside the state files. Passwords, and secret keys processed by resources are always stored in there.
+
+Hence, you must consider to always enable encryption. You can see how we achieved that with server_side_encryption_configuration.
+
+Next, we will create a DynamoDB table to handle locks and perform consistency checks. In previous projects, locks were handled with a local file as shown in terraform.tfstate.lock.info. Since we now have a team mindset, causing us to configure S3 as our backend to store state file, we will do the same to handle locking. 
+
+Therefore, with a cloud storage database like DynamoDB, anyone running Terraform against the same infrastructure can use a central location to control a situation where Terraform is running at the same time from multiple different people.
+
+Dynamo DB resource for locking and consistency checking:
+
+    resource "aws_dynamodb_table" "terraform_locks" {
+      name         = "terraform-locks"
+      billing_mode = "PAY_PER_REQUEST"
+      hash_key     = "LockID"
+      attribute {
+        name = "LockID"
+        type = "S"
+      }
+    }
+
+Terraform expects that both S3 bucket and DynamoDB resources are already created before we configure the backend. So, let us run terraform apply to provision resources.
+
+Configure S3 Backend
+
+    terraform {
+      backend "s3" {
+        bucket         = "dev-terraform-bucket"
+        key            = "global/s3/terraform.tfstate"
+        region         = "eu-central-1"
+        dynamodb_table = "terraform-locks"
+        encrypt        = true
+      }
+    }
+
+Now its time to re-initialize the backend. Run terraform init and confirm you are happy to change the backend by typing yes
+
+![terraform init](https://user-images.githubusercontent.com/10243139/138569797-af9761b6-1e0b-4f4a-b943-7a64fb8e2796.png)
+
+Verify the changes
+
+Before doing anything if you opened AWS now to see what happened you should be able to see the following:
+
+- tfstatefile is now inside the S3 bucket
+
+![Screenshot 2021-09-26 at 13 25 59](https://user-images.githubusercontent.com/10243139/138569854-19cb5089-2e37-4f7c-8c63-825280a44525.png)
+
+- DynamoDB table which we create has an entry which includes state file status
+
+![Screenshot 2021-09-26 at 13 26 54](https://user-images.githubusercontent.com/10243139/138569864-da04010a-5097-4bb3-9313-ecf830f60771.png)
